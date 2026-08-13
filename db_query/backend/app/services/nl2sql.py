@@ -1,9 +1,12 @@
 """Natural Language to SQL conversion service using OpenAI."""
 
+import logging
+import re
+
 from openai import AsyncOpenAI
 from app.config import settings
 from app.models.database import DatabaseType
-import logging
+from app.services.sql_validator import validate_and_transform_sql, SqlValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -12,12 +15,25 @@ class NaturalLanguageToSQLService:
     """Service for converting natural language queries to SQL using OpenAI."""
 
     def __init__(self):
-        """Initialize OpenAI client."""
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self.model = "gpt-4o-mini"  # Cost-effective model for SQL generation
+        """Initialize OpenAI-compatible client.
+
+        Supports any OpenAI-compatible endpoint via settings.openai_base_url
+        (e.g. One-API gateway, DeepSeek, Ollama). Model name is configurable
+        via settings.openai_model.
+        """
+        self.client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url or None,
+            timeout=30.0,
+        )
+        self.model = settings.openai_model
 
     def _build_prompt(
-        self, user_prompt: str, metadata: dict, db_type: DatabaseType = DatabaseType.POSTGRESQL
+        self,
+        user_prompt: str,
+        metadata: dict,
+        db_type: DatabaseType = DatabaseType.POSTGRESQL,
+        messages: list[dict[str, str]] | None = None,
     ) -> list[dict[str, str]]:
         """Build the prompt for OpenAI with database metadata context.
 
@@ -25,6 +41,7 @@ class NaturalLanguageToSQLService:
             user_prompt: Natural language query from user
             metadata: Database schema metadata dictionary
             db_type: Database type (PostgreSQL or MySQL)
+            messages: Optional multi-turn conversation history (role/content)
 
         Returns:
             List of messages for OpenAI chat completion
@@ -80,17 +97,47 @@ Rules:
 {syntax_rules}
 7. Handle both English and Chinese natural language
 8. Be concise - return just the SQL query
+9. First output one sentence of natural language explanation, then the SQL wrapped in a ```sql code block.
 
 Output format:
-Return ONLY the SQL query, nothing else. No explanations, no markdown, just the SQL."""
+One sentence of natural language explanation, then the SQL in a ```sql code block."""
 
-        return [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_prompt},
-        ]
+        msgs: list[dict[str, str]] = [{"role": "system", "content": system_message}]
+        for m in messages or []:
+            msgs.append({"role": m["role"], "content": m["content"]})
+        msgs.append({"role": "user", "content": user_prompt})
+        return msgs
+
+    @staticmethod
+    def _parse_response(raw: str) -> dict[str, str]:
+        """从模型输出中提取回复文本与 SQL。
+
+        格式约定：一句自然语言说明 + ```sql 代码块。找不到代码块时整段视为 SQL。
+        """
+        match = re.search(r"```(?:sql)?\s*(.*?)```", raw, re.DOTALL | re.IGNORECASE)
+        if match:
+            sql = match.group(1).strip()
+            reply = (raw[: match.start()] + raw[match.end():]).strip()
+        else:
+            sql = raw.strip()
+            reply = ""
+        return {"reply": reply, "sql": sql}
+
+    @staticmethod
+    def _sanitize_error(msg: str, max_len: int = 500) -> str:
+        """剥离 HTML 标签、压缩空白并截断，避免整段拦截页抛给前端。"""
+        msg = re.sub(r"<[^>]+>", " ", msg)
+        msg = re.sub(r"\s+", " ", msg).strip()
+        if len(msg) > max_len:
+            msg = msg[:max_len] + "...(truncated)"
+        return msg
 
     async def generate_sql(
-        self, user_prompt: str, metadata: dict, db_type: DatabaseType = DatabaseType.POSTGRESQL
+        self,
+        user_prompt: str,
+        metadata: dict,
+        db_type: DatabaseType = DatabaseType.POSTGRESQL,
+        messages: list[dict[str, str]] | None = None,
     ) -> dict[str, str]:
         """Convert natural language to SQL query.
 
@@ -98,42 +145,45 @@ Return ONLY the SQL query, nothing else. No explanations, no markdown, just the 
             user_prompt: Natural language query
             metadata: Database schema metadata dictionary
             db_type: Database type (PostgreSQL or MySQL)
+            messages: Optional multi-turn conversation history (role/content)
 
         Returns:
-            Dict with 'sql' and 'explanation' keys
+            Dict with 'reply' and 'sql' keys
 
         Raises:
-            Exception: If OpenAI API call fails
+            Exception: If OpenAI API call fails or generated SQL is invalid
         """
         try:
-            messages = self._build_prompt(user_prompt, metadata, db_type)
+            msgs = self._build_prompt(user_prompt, metadata, db_type, messages)
 
             # Call OpenAI API
             response = await self.client.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=msgs,
                 temperature=0.1,  # Low temperature for consistent SQL generation
                 max_tokens=500,
             )
 
-            generated_sql = response.choices[0].message.content.strip()
+            generated = response.choices[0].message.content.strip()
+            parsed = self._parse_response(generated)
 
-            # Clean up the response (remove markdown code blocks if present)
-            if generated_sql.startswith("```sql"):
-                generated_sql = generated_sql.replace("```sql", "").replace("```", "").strip()
-            elif generated_sql.startswith("```"):
-                generated_sql = generated_sql.replace("```", "").strip()
-
-            # Generate explanation
-            explanation = f"Generated SQL from: {user_prompt}"
+            # Post-generation validation: enforce SELECT-only and a LIMIT cap.
+            # Guards against models returning non-SELECT or unbounded queries.
+            try:
+                parsed["sql"] = validate_and_transform_sql(
+                    parsed["sql"], limit=1000, db_type=db_type
+                )
+            except SqlValidationError as e:
+                logger.error(f"Generated SQL failed validation: {e}")
+                raise Exception(f"Generated SQL is not valid (SELECT only): {e}")
 
             logger.info(f"Generated SQL for prompt: {user_prompt[:50]}...")
-
-            return {"sql": generated_sql, "explanation": explanation}
+            return parsed
 
         except Exception as e:
-            logger.error(f"Failed to generate SQL: {str(e)}")
-            raise Exception(f"Failed to generate SQL: {str(e)}")
+            message_str = self._sanitize_error(str(e))
+            logger.error(f"Failed to generate SQL: {message_str}")
+            raise Exception(f"Failed to generate SQL: {message_str}") from e
 
 
 # Global instance

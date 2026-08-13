@@ -102,7 +102,7 @@ class TestGenerateSql:
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content="SELECT * FROM public.users LIMIT 100"
+                    content="Here are the users.\n```sql\nSELECT * FROM public.users LIMIT 100\n```"
                 )
             )
         ]
@@ -123,12 +123,12 @@ class TestGenerateSql:
 
             # Verify result structure
             assert "sql" in result
-            assert "explanation" in result
+            assert "reply" in result
             assert result["sql"] == "SELECT * FROM public.users LIMIT 100"
-            assert "Show me all users" in result["explanation"]
+            assert result["reply"] == "Here are the users."
 
-            # Verify OpenAI call parameters
-            assert call_args.kwargs["model"] == "gpt-4o-mini"
+            # Verify OpenAI call parameters (configured model passed through)
+            assert call_args.kwargs["model"] == nl2sql_service.model
 
     @pytest.mark.asyncio
     async def test_generate_sql_removes_markdown(self, nl2sql_service, sample_metadata):
@@ -191,7 +191,7 @@ class TestGenerateSql:
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content="SELECT * FROM public.users LIMIT 100"
+                    content="这里是所有用户。\n```sql\nSELECT * FROM public.users LIMIT 100\n```"
                 )
             )
         ]
@@ -217,7 +217,7 @@ class TestGenerateSql:
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content="SELECT u.name, o.total FROM public.users u JOIN public.orders o ON u.id = o.user_id LIMIT 100"
+                    content="Here are users with their orders.\n```sql\nSELECT u.name, o.total FROM public.users u JOIN public.orders o ON u.id = o.user_id LIMIT 100\n```"
                 )
             )
         ]
@@ -394,3 +394,136 @@ class TestBuildPrompt:
         assert "settings" in system_message
         assert "enabled" in system_message
         assert "boolean" in system_message
+
+
+class TestGeneratedSqlValidation:
+    """Test post-generation SQL validation."""
+
+    @pytest.mark.asyncio
+    async def test_generate_sql_adds_limit_when_missing(self, nl2sql_service, sample_metadata):
+        """SELECT without LIMIT gets LIMIT 1000 appended by validation."""
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content="SELECT id FROM users"))
+        ]
+
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            result = await nl2sql_service.generate_sql(
+                user_prompt="list all users",
+                metadata=sample_metadata,
+            )
+
+            assert "LIMIT" in result["sql"].upper()
+            assert "1000" in result["sql"]
+
+    @pytest.mark.asyncio
+    async def test_generate_sql_rejects_non_select(self, nl2sql_service, sample_metadata):
+        """Non-SELECT generated SQL raises a clear error."""
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content="DELETE FROM users"))
+        ]
+
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            with pytest.raises(Exception, match="SELECT only"):
+                await nl2sql_service.generate_sql(
+                    user_prompt="delete all users",
+                    metadata=sample_metadata,
+                )
+
+
+class TestMultiTurn:
+    """Test multi-turn history and reply parsing."""
+
+    @pytest.mark.asyncio
+    async def test_generate_sql_parses_reply_and_sql(self, nl2sql_service, sample_metadata):
+        """自然句 + SQL 代码块被正确拆成 reply 和 sql。"""
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content="Here are the active users.\n```sql\nSELECT id, name FROM public.users WHERE active = true LIMIT 100\n```"
+                )
+            )
+        ]
+
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            result = await nl2sql_service.generate_sql("show active users", sample_metadata)
+
+        assert result["reply"] == "Here are the active users."
+        assert result["sql"] == "SELECT id, name FROM public.users WHERE active = true LIMIT 100"
+
+    @pytest.mark.asyncio
+    async def test_generate_sql_includes_history(self, nl2sql_service, sample_metadata):
+        """历史消息进入 prompt，当前输入作为最后一条 user 消息。"""
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content="```sql\nSELECT * FROM public.orders LIMIT 100\n```"))
+        ]
+
+        history = [
+            {"role": "user", "content": "show all users"},
+            {"role": "assistant", "content": "SELECT * FROM public.users LIMIT 100"},
+        ]
+
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=mock_response),
+        ) as mock_create:
+            await nl2sql_service.generate_sql("now show orders", sample_metadata, messages=history)
+
+        sent = mock_create.call_args.kwargs["messages"]
+        roles = [m["role"] for m in sent]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert sent[1]["content"] == "show all users"
+        assert sent[2]["content"] == "SELECT * FROM public.users LIMIT 100"
+        assert sent[-1]["content"] == "now show orders"
+
+    @pytest.mark.asyncio
+    async def test_generate_sql_sanitizes_html_error(self, nl2sql_service, sample_metadata):
+        """拦截页 HTML 不应整段透传给调用方。"""
+        html_error = (
+            "<!DOCTYPE html><html><body><title>Error - Request Blocked</title>"
+            "<p>Some long body text</p></body></html>"
+        )
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(side_effect=Exception(html_error)),
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await nl2sql_service.generate_sql("show users", sample_metadata)
+
+        msg = str(exc_info.value)
+        assert "Failed to generate SQL" in msg
+        assert "<html" not in msg
+        assert "<title>" not in msg
+
+    def test_build_prompt_includes_history(self, nl2sql_service, sample_metadata):
+        """_build_prompt 组装 system + 历史 + 当前 user。"""
+        messages = nl2sql_service._build_prompt(
+            user_prompt="show orders",
+            metadata=sample_metadata,
+            messages=[
+                {"role": "user", "content": "show users"},
+                {"role": "assistant", "content": "SELECT * FROM public.users LIMIT 100"},
+            ],
+        )
+        roles = [m["role"] for m in messages]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert messages[1]["content"] == "show users"
+        assert messages[2]["content"] == "SELECT * FROM public.users LIMIT 100"
+        assert messages[3]["content"] == "show orders"
