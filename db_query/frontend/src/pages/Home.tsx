@@ -25,20 +25,14 @@ import {
 } from "@ant-design/icons";
 import { apiClient } from "../services/api";
 import { DatabaseMetadata, TableMetadata } from "../types/metadata";
+import { QueryResult } from "../types/query";
+import { downloadCsv, downloadJson } from "../utils/export";
 import { MetadataTree } from "../components/MetadataTree";
 import { SqlEditor } from "../components/SqlEditor";
 import { DatabaseSidebar } from "../components/DatabaseSidebar";
-import { NaturalLanguageInput } from "../components/NaturalLanguageInput";
+import { ChatAssistant } from "../components/ChatAssistant";
 
 const { Title, Text } = Typography;
-
-interface QueryResult {
-  columns: Array<{ name: string; dataType: string }>;
-  rows: Array<Record<string, any>>;
-  rowCount: number;
-  executionTimeMs: number;
-  sql: string;
-}
 
 export const Home: React.FC = () => {
   const [selectedDatabase, setSelectedDatabase] = useState<string | null>(null);
@@ -49,8 +43,6 @@ export const Home: React.FC = () => {
   const [executing, setExecuting] = useState(false);
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [activeTab, setActiveTab] = useState<"manual" | "natural">("manual");
-  const [generatingSql, setGeneratingSql] = useState(false);
-  const [nlError, setNlError] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedDatabase) {
@@ -114,111 +106,48 @@ export const Home: React.FC = () => {
     }
   };
 
-  const handleGenerateSQL = async (prompt: string) => {
-    if (!selectedDatabase) return;
-
-    setGeneratingSql(true);
-    setNlError(null);
-    try {
-      const response = await apiClient.post<{ sql: string; explanation: string }>(
-        `/api/v1/dbs/${selectedDatabase}/query/natural`,
-        { prompt }
-      );
-      setSql(response.data.sql);
-      setActiveTab("manual"); // Switch to manual tab to show generated SQL
-      message.success("SQL generated successfully! You can now edit and execute it.");
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.detail || "Failed to generate SQL";
-      setNlError(errorMsg);
-      message.error(errorMsg);
-    } finally {
-      setGeneratingSql(false);
-    }
-  };
-
   const handleExportCSV = () => {
-    if (!queryResult || queryResult.rows.length === 0) {
+    const result = queryResult; // 捕获本次渲染值，供 Modal.confirm onOk 闭包使用
+    if (!result || result.rows.length === 0) {
       message.warning("No data to export");
       return;
     }
-
-    // Warn if result is large
-    if (queryResult.rows.length > 10000) {
+    if (result.rows.length > 10000) {
       Modal.confirm({
         title: "Large Dataset Warning",
         icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToCSV(),
+        content: `You are about to export ${result.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
+        onOk: () => {
+          downloadCsv(result, selectedDatabase!);
+          message.success(`Exported ${result.rowCount} rows to CSV`);
+        },
       });
     } else {
-      exportToCSV();
+      downloadCsv(result, selectedDatabase!);
+      message.success(`Exported ${result.rowCount} rows to CSV`);
     }
-  };
-
-  const exportToCSV = () => {
-    if (!queryResult) return;
-
-    // Generate CSV content
-    const headers = queryResult.columns.map((col) => col.name);
-    const csvRows = [headers.join(",")];
-
-    queryResult.rows.forEach((row) => {
-      const values = headers.map((header) => {
-        const value = row[header];
-        // Handle null/undefined
-        if (value === null || value === undefined) return "";
-        // Escape quotes and wrap in quotes if contains comma or quote
-        const stringValue = String(value);
-        if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
-          return `"${stringValue.replace(/"/g, '""')}"`;
-        }
-        return stringValue;
-      });
-      csvRows.push(values.join(","));
-    });
-
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to CSV`);
   };
 
   const handleExportJSON = () => {
-    if (!queryResult || queryResult.rows.length === 0) {
+    const result = queryResult; // 捕获本次渲染值，供 Modal.confirm onOk 闭包使用
+    if (!result || result.rows.length === 0) {
       message.warning("No data to export");
       return;
     }
-
-    // Warn if result is large
-    if (queryResult.rows.length > 10000) {
+    if (result.rows.length > 10000) {
       Modal.confirm({
         title: "Large Dataset Warning",
         icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToJSON(),
+        content: `You are about to export ${result.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
+        onOk: () => {
+          downloadJson(result, selectedDatabase!);
+          message.success(`Exported ${result.rowCount} rows to JSON`);
+        },
       });
     } else {
-      exportToJSON();
+      downloadJson(result, selectedDatabase!);
+      message.success(`Exported ${result.rowCount} rows to JSON`);
     }
-  };
-
-  const exportToJSON = () => {
-    if (!queryResult) return;
-
-    const jsonContent = JSON.stringify(queryResult.rows, null, 2);
-    const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to JSON`);
   };
 
   const tableColumns =
@@ -586,10 +515,9 @@ export const Home: React.FC = () => {
                 ),
                 children: (
                   <div style={{ padding: "12px 0" }}>
-                    <NaturalLanguageInput
-                      onGenerateSQL={handleGenerateSQL}
-                      loading={generatingSql}
-                      error={nlError}
+                    <ChatAssistant
+                      key={selectedDatabase}
+                      databaseName={selectedDatabase}
                     />
                   </div>
                 ),
