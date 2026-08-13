@@ -101,32 +101,53 @@ Content-Type: application/json
 
 ###
 ### 11. Natural Language to SQL - Chinese
-###
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
+### 多轮对话时把前面的 user/assistant 消息放入 messages
 POST {{baseUrl}}/dbs/{{dbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "查询所有活跃用户的姓名和邮箱"
+  "prompt": "查询所有活跃用户的姓名和邮箱",
+  "messages": []
 }
 
 ###
 ### 12. Natural Language to SQL - English
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
 ###
 POST {{baseUrl}}/dbs/{{dbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "Show total order amount by user, sorted by amount descending, limit to top 10"
+  "prompt": "Show total order amount by user, sorted by amount descending, limit to top 10",
+  "messages": []
 }
 
 ###
 ### 13. Natural Language to SQL - Complex Query
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
 ###
 POST {{baseUrl}}/dbs/{{dbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "显示最近30天注册的用户，按注册时间降序排列"
+  "prompt": "显示最近30天注册的用户，按注册时间降序排列",
+  "messages": []
+}
+
+###
+### 13b. Natural Language to SQL - Multi-turn (多轮消息历史)
+### 前面的 user/assistant 消息放入 messages；返回 { "reply": "自然语言说明", "sql": "生成的SQL" }
+POST {{baseUrl}}/dbs/{{dbName}}/query/natural HTTP/1.1
+Content-Type: application/json
+
+{
+  "prompt": "再按注册时间倒序排列",
+  "messages": [
+    { "role": "user", "content": "显示所有用户的前100条记录" },
+    { "role": "assistant", "content": "已生成：SELECT * FROM users LIMIT 100" },
+    { "role": "user", "content": "只显示邮箱非空的用户" }
+  ]
 }
 
 ###
@@ -175,11 +196,13 @@ GET {{baseUrl}}/dbs/my-postgres/history HTTP/1.1
 ###
 ### Scenario 2: Natural Language Workflow
 ### Step 1: Generate SQL from natural language
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
 POST {{baseUrl}}/dbs/my-postgres/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "查询用户表中的所有数据"
+  "prompt": "查询用户表中的所有数据",
+  "messages": []
 }
 
 ### Step 2: Execute the generated SQL (copy from previous response)
@@ -215,11 +238,13 @@ Content-Type: application/json
 }
 
 ### Error: Natural language prompt too short
+### prompt 最短 5 字符，否则请求参数校验失败（422）
 POST {{baseUrl}}/dbs/{{dbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "hi"
+  "prompt": "hi",
+  "messages": []
 }
 
 ###
@@ -338,22 +363,26 @@ Content-Type: application/json
 
 ###
 ### MySQL 7. Natural Language to SQL - Chinese
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
 ###
 POST {{baseUrl}}/dbs/{{mysqlDbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "查询所有候选人的姓名和邮箱"
+  "prompt": "查询所有候选人的姓名和邮箱",
+  "messages": []
 }
 
 ###
 ### MySQL 8. Natural Language to SQL - English
+### 返回 { "reply": "自然语言说明", "sql": "生成的SQL" }，sql 已由后端 sqlglot 校验（仅 SELECT + LIMIT 1000）
 ###
 POST {{baseUrl}}/dbs/{{mysqlDbName}}/query/natural HTTP/1.1
 Content-Type: application/json
 
 {
-  "prompt": "Show all active candidates with their interview scores"
+  "prompt": "Show all active candidates with their interview scores",
+  "messages": []
 }
 
 ###
