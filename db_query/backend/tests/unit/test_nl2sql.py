@@ -493,6 +493,28 @@ class TestMultiTurn:
         assert sent[-1]["content"] == "now show orders"
 
     @pytest.mark.asyncio
+    async def test_generate_sql_prefers_sql_fence(self, nl2sql_service, sample_metadata):
+        """自然说明被非 sql 围栏包裹时，仍只提取 ```sql 块作为 SQL。"""
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content="说明如下：\n```python\nprint('hello')\n```\n然后执行：\n```sql\nSELECT * FROM public.users LIMIT 100\n```"
+                )
+            )
+        ]
+
+        with patch.object(
+            nl2sql_service.client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            result = await nl2sql_service.generate_sql("show users", sample_metadata)
+
+        assert result["sql"] == "SELECT * FROM public.users LIMIT 100"
+        assert "SELECT" not in result["reply"]
+
+    @pytest.mark.asyncio
     async def test_generate_sql_sanitizes_html_error(self, nl2sql_service, sample_metadata):
         """拦截页 HTML 不应整段透传给调用方。"""
         html_error = (

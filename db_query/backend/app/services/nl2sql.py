@@ -96,7 +96,7 @@ Rules:
 2. Always include LIMIT clause (max 1000 rows)
 {syntax_rules}
 7. Handle both English and Chinese natural language
-8. Be concise - return just the SQL query
+8. Be concise - keep the natural language explanation to one short sentence
 9. First output one sentence of natural language explanation, then the SQL wrapped in a ```sql code block.
 
 Output format:
@@ -114,7 +114,9 @@ One sentence of natural language explanation, then the SQL in a ```sql code bloc
 
         格式约定：一句自然语言说明 + ```sql 代码块。找不到代码块时整段视为 SQL。
         """
-        match = re.search(r"```(?:sql)?\s*(.*?)```", raw, re.DOTALL | re.IGNORECASE)
+        match = re.search(r"```sql\s*(.*?)```", raw, re.DOTALL | re.IGNORECASE)
+        if not match:
+            match = re.search(r"```\s*(.*?)```", raw, re.DOTALL | re.IGNORECASE)
         if match:
             sql = match.group(1).strip()
             reply = (raw[: match.start()] + raw[match.end():]).strip()
