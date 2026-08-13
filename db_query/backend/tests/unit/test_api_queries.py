@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from app.main import app
 from app.database import get_session
-from app.models.database import DatabaseConnection, ConnectionStatus
+from app.models.database import DatabaseConnection, ConnectionStatus, DatabaseType
 from app.models.query import QueryHistory, QuerySource
 from app.models.metadata import DatabaseMetadata
 from app.models.schemas import QueryResult, QueryColumn
@@ -337,8 +337,8 @@ class TestNaturalLanguageToSql:
         """Test converting natural language to SQL."""
         # Mock SQL generation
         mock_generate.return_value = {
+            "reply": "Here you go",
             "sql": "SELECT * FROM public.users LIMIT 100",
-            "explanation": "Generated SQL from: Show me all users",
         }
 
         response = client.post(
@@ -349,13 +349,14 @@ class TestNaturalLanguageToSql:
         assert response.status_code == 200
         data = response.json()
         assert data["sql"] == "SELECT * FROM public.users LIMIT 100"
-        assert "explanation" in data
-        assert "Show me all users" in data["explanation"]
+        assert data["reply"] == "Here you go"
 
         # Verify generate_sql was called
         mock_generate.assert_called_once_with(
             "Show me all users",
             sample_metadata,
+            DatabaseType.POSTGRESQL,
+            messages=[],
         )
 
     def test_natural_language_to_sql_database_not_found(self, client):
@@ -382,8 +383,8 @@ class TestNaturalLanguageToSql:
     @patch("app.api.v1.queries.nl2sql_service.generate_sql")
     def test_natural_language_to_sql_generation_error(self, mock_generate, client, sample_connection, sample_metadata):
         """Test NL to SQL when generation fails."""
-        # Mock generation error
-        mock_generate.side_effect = Exception("OpenAI API error")
+        # Mock generation error (mirrors nl2sql_service, which wraps errors with "Failed to generate SQL: ")
+        mock_generate.side_effect = Exception("Failed to generate SQL: OpenAI API error")
 
         response = client.post(
             "/api/v1/dbs/test_db/query/natural",
@@ -419,7 +420,7 @@ class TestNaturalLanguageToSql:
         # Mock SQL generation
         mock_generate.return_value = {
             "sql": "SELECT * FROM public.users LIMIT 100",
-            "explanation": "Generated SQL from: 显示所有用户",
+            "reply": "Generated SQL from: 显示所有用户",
         }
 
         response = client.post(
@@ -430,7 +431,36 @@ class TestNaturalLanguageToSql:
         assert response.status_code == 200
         data = response.json()
         assert "sql" in data
-        assert "explanation" in data
+        assert "reply" in data
+
+    @patch("app.api.v1.queries.nl2sql_service.generate_sql")
+    def test_natural_language_to_sql_with_history(self, mock_generate, client, sample_connection, sample_metadata):
+        """带历史消息的自然语言请求透传给 generate_sql。"""
+        mock_generate.return_value = {
+            "reply": "Here are the orders.",
+            "sql": "SELECT * FROM public.orders LIMIT 100",
+        }
+        response = client.post(
+            "/api/v1/dbs/test_db/query/natural",
+            json={
+                "prompt": "now show orders",
+                "messages": [
+                    {"role": "user", "content": "show users"},
+                    {"role": "assistant", "content": "SELECT * FROM public.users LIMIT 100"},
+                ],
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["reply"] == "Here are the orders."
+        assert data["sql"] == "SELECT * FROM public.orders LIMIT 100"
+
+        mock_generate.assert_called_once()
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["messages"] == [
+            {"role": "user", "content": "show users"},
+            {"role": "assistant", "content": "SELECT * FROM public.users LIMIT 100"},
+        ]
 
 
 class TestQueryHistoryEntry:

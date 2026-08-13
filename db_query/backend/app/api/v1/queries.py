@@ -170,13 +170,18 @@ async def natural_language_to_sql(
 
     # Generate SQL
     try:
-        result = await nl2sql_service.generate_sql(input_data.prompt, metadata, connection.db_type)
+        result = await nl2sql_service.generate_sql(
+            input_data.prompt,
+            metadata,
+            connection.db_type,
+            messages=[m.model_dump() for m in input_data.messages],
+        )
         return GeneratedSqlResponse(
+            reply=result["reply"],
             sql=result["sql"],
-            explanation=result["explanation"],
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate SQL: {str(e)}",
+            detail=str(e),
         )
