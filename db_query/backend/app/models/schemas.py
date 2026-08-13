@@ -100,17 +100,25 @@ class QueryHistoryEntry(BaseModel):
 
 
 # Natural Language Schemas
+class ChatMessage(BaseModel):
+    """A single message in the conversation history."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class NaturalLanguageInput(BaseModel):
     """Input schema for natural language to SQL conversion."""
 
     prompt: str = Field(..., min_length=5, max_length=500)
+    messages: list[ChatMessage] = Field(default_factory=list)
 
 
 class GeneratedSqlResponse(BaseModel):
     """Response schema for generated SQL."""
 
+    reply: str
     sql: str
-    explanation: str
 
 
 # Error Schema
