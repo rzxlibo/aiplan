@@ -11,22 +11,21 @@ import {
   message,
   Row,
   Col,
+  Dropdown,
   Typography,
   Empty,
   Tabs,
-  Modal,
 } from "antd";
 import {
   PlayCircleOutlined,
   SearchOutlined,
   DatabaseOutlined,
   ReloadOutlined,
-  ExclamationCircleOutlined,
 } from "@ant-design/icons";
 import { apiClient } from "../services/api";
 import { DatabaseMetadata, TableMetadata } from "../types/metadata";
 import { QueryResult } from "../types/query";
-import { downloadCsv, downloadJson } from "../utils/export";
+import { exportResult } from "../utils/export";
 import { MetadataTree } from "../components/MetadataTree";
 import { SqlEditor } from "../components/SqlEditor";
 import { DatabaseSidebar } from "../components/DatabaseSidebar";
@@ -67,10 +66,10 @@ export const Home: React.FC = () => {
     }
   };
 
-  const handleExecuteQuery = async () => {
+  const executeQuery = async (): Promise<QueryResult | null> => {
     if (!selectedDatabase || !sql.trim()) {
       message.warning("Please enter a SQL query");
-      return;
+      return null;
     }
 
     setExecuting(true);
@@ -80,14 +79,30 @@ export const Home: React.FC = () => {
         { sql: sql.trim() }
       );
       setQueryResult(response.data);
-      message.success(
-        `Query executed - ${response.data.rowCount} rows in ${response.data.executionTimeMs}ms`
-      );
+      return response.data;
     } catch (error: any) {
       message.error(error.response?.data?.detail || "Query execution failed");
       setQueryResult(null);
+      return null;
     } finally {
       setExecuting(false);
+    }
+  };
+
+  const handleExecuteQuery = async () => {
+    const result = await executeQuery();
+    if (result) {
+      message.success(
+        `Query executed - ${result.rowCount} rows in ${result.executionTimeMs}ms`
+      );
+    }
+  };
+
+  // 一键「执行 + 导出」：执行成功后直接导出结果
+  const handleExecuteAndExport = async (format: "csv" | "json") => {
+    const result = await executeQuery();
+    if (result) {
+      exportResult(result, format, selectedDatabase!);
     }
   };
 
@@ -107,47 +122,11 @@ export const Home: React.FC = () => {
   };
 
   const handleExportCSV = () => {
-    const result = queryResult; // 捕获本次渲染值，供 Modal.confirm onOk 闭包使用
-    if (!result || result.rows.length === 0) {
-      message.warning("No data to export");
-      return;
-    }
-    if (result.rows.length > 10000) {
-      Modal.confirm({
-        title: "Large Dataset Warning",
-        icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${result.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => {
-          downloadCsv(result, selectedDatabase!);
-          message.success(`Exported ${result.rowCount} rows to CSV`);
-        },
-      });
-    } else {
-      downloadCsv(result, selectedDatabase!);
-      message.success(`Exported ${result.rowCount} rows to CSV`);
-    }
+    if (queryResult) exportResult(queryResult, "csv", selectedDatabase!);
   };
 
   const handleExportJSON = () => {
-    const result = queryResult; // 捕获本次渲染值，供 Modal.confirm onOk 闭包使用
-    if (!result || result.rows.length === 0) {
-      message.warning("No data to export");
-      return;
-    }
-    if (result.rows.length > 10000) {
-      Modal.confirm({
-        title: "Large Dataset Warning",
-        icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${result.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => {
-          downloadJson(result, selectedDatabase!);
-          message.success(`Exported ${result.rowCount} rows to JSON`);
-        },
-      });
-    } else {
-      downloadJson(result, selectedDatabase!);
-      message.success(`Exported ${result.rowCount} rows to JSON`);
-    }
+    if (queryResult) exportResult(queryResult, "json", selectedDatabase!);
   };
 
   const tableColumns =
@@ -454,21 +433,46 @@ export const Home: React.FC = () => {
           }
           extra={
             activeTab === "manual" ? (
-              <Button
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                onClick={handleExecuteQuery}
-                loading={executing}
-                size="large"
-                style={{
-                  height: 40,
-                  paddingLeft: 20,
-                  paddingRight: 20,
-                  fontWeight: 700,
-                }}
-              >
-                EXECUTE
-              </Button>
+              <Space size={8}>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  onClick={handleExecuteQuery}
+                  loading={executing}
+                  size="large"
+                  style={{
+                    height: 40,
+                    paddingLeft: 20,
+                    paddingRight: 20,
+                    fontWeight: 700,
+                  }}
+                >
+                  EXECUTE
+                </Button>
+                <Dropdown.Button
+                  type="primary"
+                  loading={executing}
+                  menu={{
+                    items: [
+                      {
+                        key: "csv",
+                        label: "CSV",
+                        onClick: () => handleExecuteAndExport("csv"),
+                      },
+                      {
+                        key: "json",
+                        label: "JSON",
+                        onClick: () => handleExecuteAndExport("json"),
+                      },
+                    ],
+                  }}
+                  onClick={() => handleExecuteAndExport("csv")}
+                  size="large"
+                  style={{ height: 40, fontWeight: 700 }}
+                >
+                  EXEC & EXPORT
+                </Dropdown.Button>
+              </Space>
             ) : null
           }
           style={{ borderWidth: 2, borderColor: "#000000", marginBottom: 16 }}

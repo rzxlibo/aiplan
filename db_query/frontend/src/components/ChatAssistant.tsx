@@ -9,7 +9,7 @@ import {
 } from "@ant-design/icons";
 import { apiClient } from "../services/api";
 import { QueryResult } from "../types/query";
-import { downloadCsv, downloadJson } from "../utils/export";
+import { detectExportIntent, exportResult } from "../utils/export";
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -38,6 +38,18 @@ function toHistoryContent(m: ChatMessage): string {
   return m.content;
 }
 
+/** 最近一条带结果且非空的消息结果。 */
+function findLatestResult(messages: ChatMessage[]): QueryResult | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m) continue;
+    if (m.role === "assistant" && m.result && m.result.rows.length > 0) {
+      return m.result;
+    }
+  }
+  return null;
+}
+
 export const ChatAssistant: React.FC<ChatAssistantProps> = ({ databaseName }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -60,11 +72,45 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ databaseName }) =>
     const prompt = input.trim();
     if (!prompt || sending) return;
 
+    setInput("");
+
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: prompt,
     };
+
+    // 自然语言触发导出：命中导出意图则直接导出最近结果，不走 NL 接口
+    const intent = detectExportIntent(prompt);
+    if (intent.isExport) {
+      setMessages((prev) => [...prev, userMsg]);
+      const latest = findLatestResult(messages);
+      if (!latest) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "还没有可导出的查询结果。",
+            status: "done",
+          },
+        ]);
+      } else {
+        exportResult(latest, intent.format, databaseName);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `已导出 ${intent.format.toUpperCase()}（${latest.rowCount} 行）`,
+            status: "done",
+          },
+        ]);
+      }
+      scrollToBottom();
+      return;
+    }
+
     const assistantMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -72,7 +118,6 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ databaseName }) =>
       status: "generating",
     };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setInput("");
     setSending(true);
     scrollToBottom();
 
@@ -227,13 +272,13 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ databaseName }) =>
                   {m.result.rows.length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                       <Text type="secondary" style={{ fontSize: 12 }}>
-                        需要导出为 CSV/JSON？
+                        需要将这次查询结果导出为 CSV 或 JSON 文件吗？
                       </Text>
-                      <Button size="small" onClick={() => downloadCsv(m.result!, databaseName)}>
-                        导出CSV
+                      <Button size="small" onClick={() => exportResult(m.result!, "csv", databaseName)}>
+                        CSV
                       </Button>
-                      <Button size="small" onClick={() => downloadJson(m.result!, databaseName)}>
-                        导出JSON
+                      <Button size="small" onClick={() => exportResult(m.result!, "json", databaseName)}>
+                        JSON
                       </Button>
                     </div>
                   )}

@@ -7,8 +7,10 @@ from pathlib import Path
 class Settings(BaseSettings):
     """Application settings."""
 
-    # OpenAI API
+    # OpenAI-compatible AI model API
     openai_api_key: str
+    openai_base_url: str | None = None  # Custom endpoint (One-API/gateway/Ollama); None = OpenAI official
+    openai_model: str = "gpt-4o-mini"
 
     # Data directory
     db_query_data_dir: str = str(Path.home() / ".db_query")
