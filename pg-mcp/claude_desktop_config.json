@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "D:\\git\\zuoye\\pg-mcp\\w5\\pg-mcp",
+        "run",
+        "python",
+        "-m",
+        "pg_mcp"
+      ],
+      "env": {
+        "_comment": "DATABASE_* 与 OPENAI_* 由项目根目录 .env 提供（代码已支持这两组读取 .env），此处不再重复，避免占位符覆盖真实值。以下 5 组尚未支持 .env，故必须在此提供。",
+        "SECURITY_ALLOW_WRITE_OPERATIONS": "false",
+        "SECURITY_MAX_ROWS": "10000",
+        "SECURITY_MAX_EXECUTION_TIME": "30",
+        "VALIDATION_MAX_QUESTION_LENGTH": "10000",
+        "VALIDATION_MIN_CONFIDENCE_SCORE": "70",
+        "CACHE_ENABLED": "true",
+        "CACHE_SCHEMA_TTL": "3600",
+        "CACHE_MAX_SIZE": "100",
+        "RESILIENCE_MAX_RETRIES": "3",
+        "RESILIENCE_RETRY_DELAY": "1.0",
+        "RESILIENCE_BACKOFF_FACTOR": "2.0",
+        "RESILIENCE_CIRCUIT_BREAKER_THRESHOLD": "5",
+        "RESILIENCE_CIRCUIT_BREAKER_TIMEOUT": "60",
+        "OBSERVABILITY_METRICS_ENABLED": "true",
+        "OBSERVABILITY_METRICS_PORT": "9090",
+        "OBSERVABILITY_LOG_LEVEL": "INFO",
+        "OBSERVABILITY_LOG_FORMAT": "json",
+        "ENVIRONMENT": "production"
+      }
+    }
+  }
+}

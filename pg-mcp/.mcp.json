@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "pg-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "D:/git/zuoye/pg-mcp/w5/pg-mcp",
+        "run",
+        "python",
+        "-m",
+        "pg_mcp"
+      ],
+      "env": {}
+    }
+  }
+}
